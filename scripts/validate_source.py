@@ -38,6 +38,36 @@ for token in required_workflow_tokens:
         print(f"Workflow is missing required token: {token}")
         sys.exit(1)
 
+app_build = (root / "app/build.gradle.kts").read_text(encoding="utf-8")
+readme = (root / "README.md").read_text(encoding="utf-8")
+consistency_tokens = {
+    "app/build.gradle.kts": [
+        "compileSdk = 36",
+        "targetSdk = 36",
+        "versionCode = 20002",
+        'versionName = "2.0.2"',
+    ],
+    ".github/workflows/android-build.yml": [
+        '"platforms;android-36"',
+        '"build-tools;36.0.0"',
+        "FranProbe-2.0.2-debug.apk",
+    ],
+    "README.md": [
+        "# FranProbe 2.0.2",
+        "Android SDK Platform 36",
+    ],
+}
+contents = {
+    "app/build.gradle.kts": app_build,
+    ".github/workflows/android-build.yml": workflow,
+    "README.md": readme,
+}
+for file_name, tokens in consistency_tokens.items():
+    for token in tokens:
+        if token not in contents[file_name]:
+            print(f"Version/SDK mismatch in {file_name}: missing {token}")
+            sys.exit(1)
+
 for source in root.rglob("*.kt"):
     text = source.read_text(encoding="utf-8")
     if "TODO(" in text or "FIXME" in text:

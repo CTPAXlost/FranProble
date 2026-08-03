@@ -1,4 +1,4 @@
-# FranProbe 2.0.1
+# FranProbe 2.0.2
 
 FranProbe — Android-приложение для послойной диагностики сети при режиме разрешённых адресов («белых списков»), выборочной фильтрации DNS, TCP/UDP и TLS/SNI.
 
@@ -39,7 +39,7 @@ Workflow сам создаёт Gradle Wrapper 9.5.0, затем запускае
 
 ## Локальная сборка
 
-Проще всего открыть проект в Android Studio с JDK 17 и Android SDK Platform 37. Если Gradle Wrapper ещё не создан, один раз выполните установленным Gradle 9.5.0:
+Проще всего открыть проект в Android Studio с JDK 17 и Android SDK Platform 36. Если Gradle Wrapper ещё не создан, один раз выполните установленным Gradle 9.5.0:
 
 ```bash
 gradle wrapper --gradle-version 9.5.0 --distribution-type bin

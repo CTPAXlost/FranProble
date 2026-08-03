@@ -267,7 +267,7 @@ object NetworkTools {
             val request = Request.Builder()
                 .url("https://$serverName/dns-query")
                 .header("Accept", "application/dns-message")
-                .header("User-Agent", "FranProbe/2.0")
+                .header("User-Agent", "FranProbe/2.0.2")
                 .post(query.bytes.toRequestBody("application/dns-message".toMediaType()))
                 .build()
 
@@ -348,7 +348,7 @@ object NetworkTools {
                 val host = hostHeader?.takeIf { it.isNotBlank() } ?: normalizedSni ?: ip
                 val output = BufferedOutputStream(socket.outputStream)
                 output.write(
-                    "GET / HTTP/1.1\r\nHost: $host\r\nUser-Agent: FranProbe/2.0\r\nConnection: close\r\nAccept: */*\r\n\r\n"
+                    "GET / HTTP/1.1\r\nHost: $host\r\nUser-Agent: FranProbe/2.0.2\r\nConnection: close\r\nAccept: */*\r\n\r\n"
                         .toByteArray(Charsets.US_ASCII)
                 )
                 output.flush()
