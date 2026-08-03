@@ -53,17 +53,26 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0"
 
+      - name: Verify resolved dependency versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :app:verifyApi36Dependencies --stacktrace --no-daemon
+          ./gradlew :app:dependencies \
+            --configuration debugRuntimeClasspath \
+            --no-daemon > dependency-report.txt
+
       - name: Unit tests, lint and APK
         run: ./gradlew clean testDebugUnitTest lintDebug assembleDebug --stacktrace --no-daemon
 
       - name: Copy APK with readable name
-        run: cp app/build/outputs/apk/debug/app-debug.apk FranProbe-2.0.2-debug.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk FranProbe-2.0.3-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: FranProbe-debug-APK
-          path: FranProbe-2.0.2-debug.apk
+          path: FranProbe-2.0.3-debug.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -76,5 +85,6 @@ jobs:
             app/build/reports/tests/
             app/build/reports/lint-results-debug.html
             app/build/reports/lint-results-debug.xml
+            dependency-report.txt
           if-no-files-found: ignore
           retention-days: 14

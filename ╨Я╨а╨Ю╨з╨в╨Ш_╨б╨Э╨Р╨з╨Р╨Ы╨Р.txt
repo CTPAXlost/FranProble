@@ -9,7 +9,7 @@ FRANPROBE 2.0 — КАК ПОЛУЧИТЬ APK ЧЕРЕЗ GITHUB
 5. Выберите workflow «FranProbe Android build» и запустите Run workflow.
 6. После зелёной галочки откройте запуск и скачайте артефакт
    FranProbe-debug-APK.
-7. Внутри артефакта будет FranProbe-2.0.2-debug.apk.
+7. Внутри артефакта будет FranProbe-2.0.3-debug.apk.
 
 Workflow не скрывает ошибки: сначала выполняются unit-тесты и Android Lint,
 затем собирается APK. Отчёты сборки сохраняются отдельным артефактом.

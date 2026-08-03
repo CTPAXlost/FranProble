@@ -44,16 +44,23 @@ consistency_tokens = {
     "app/build.gradle.kts": [
         "compileSdk = 36",
         "targetSdk = 36",
-        "versionCode = 20002",
-        'versionName = "2.0.2"',
+        "versionCode = 20003",
+        'versionName = "2.0.3"',
+        'androidx.compose:compose-bom:2025.08.00',
+        'androidx.core:core-ktx:1.17.0',
+        'androidx.activity:activity-compose:1.11.0',
+        'androidx.lifecycle:lifecycle-runtime-ktx:2.9.4',
+        'tasks.register("verifyApi36Dependencies")',
     ],
     ".github/workflows/android-build.yml": [
         '"platforms;android-36"',
         '"build-tools;36.0.0"',
-        "FranProbe-2.0.2-debug.apk",
+        "FranProbe-2.0.3-debug.apk",
+        "verifyApi36Dependencies",
+        "dependency-report.txt",
     ],
     "README.md": [
-        "# FranProbe 2.0.2",
+        "# FranProbe 2.0.3",
         "Android SDK Platform 36",
     ],
 }
