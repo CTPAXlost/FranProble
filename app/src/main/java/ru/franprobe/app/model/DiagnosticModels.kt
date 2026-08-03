@@ -122,7 +122,7 @@ data class DeviceInfo(
             device = Build.DEVICE.orEmpty(),
             androidRelease = Build.VERSION.RELEASE.orEmpty(),
             sdkInt = Build.VERSION.SDK_INT,
-            supportedAbis = Build.SUPPORTED_ABIS?.toList().orEmpty()
+            supportedAbis = Build.SUPPORTED_ABIS.toList()
         )
     }
 }

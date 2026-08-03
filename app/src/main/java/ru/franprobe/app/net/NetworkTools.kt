@@ -1,11 +1,13 @@
 package ru.franprobe.app.net
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okhttp3.Dns
@@ -14,6 +16,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import ru.franprobe.app.BuildConfig
 import ru.franprobe.app.model.DnsMessage
 import ru.franprobe.app.model.DnsRecordType
 import ru.franprobe.app.model.NetworkSnapshot
@@ -26,6 +29,8 @@ import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.UnknownHostException
+import java.net.PortUnreachableException
+import java.net.Proxy
 import java.io.IOException
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -37,6 +42,7 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 class RemoteProtocolException(message: String) : IOException(message)
+class LocalCapabilityException(message: String) : IOException(message)
 
 class NetworkEnvironment(context: Context) {
     private val connectivityManager = context.getSystemService(ConnectivityManager::class.java)
@@ -121,6 +127,8 @@ data class TlsProbeData(
     val certificateSans: List<String>,
     val certificateMatchesSni: Boolean?,
     val httpStatusLine: String?,
+    val httpErrorType: String?,
+    val httpErrorMessage: String?,
     val elapsedMs: Long
 )
 
@@ -128,6 +136,7 @@ data class UdpProbeData(
     val ip: String,
     val port: Int,
     val responseBytes: Int?,
+    val portUnreachable: Boolean,
     val elapsedMs: Long
 )
 
@@ -137,7 +146,7 @@ object NetworkTools {
         domain: String,
         timeoutMs: Int
     ): List<InetAddress> = withTimeout(timeoutMs.toLong()) {
-        withContext(Dispatchers.IO) {
+        runInterruptible(Dispatchers.IO) {
             network.getAllByName(domain).toList()
         }
     }
@@ -214,7 +223,8 @@ object NetworkTools {
             sni = serverName,
             protocolPreference = listOf("TLSv1.3", "TLSv1.2"),
             alpn = emptyList(),
-            timeoutMs = timeoutMs
+            timeoutMs = timeoutMs,
+            validateCertificate = true
         ).use { socket ->
             val output = BufferedOutputStream(socket.outputStream)
             output.write((query.bytes.size ushr 8) and 0xFF)
@@ -254,6 +264,7 @@ object NetworkTools {
         }
         val client = OkHttpClient.Builder()
             .dns(directDns)
+            .proxy(Proxy.NO_PROXY)
             .socketFactory(network.socketFactory)
             .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
             .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
@@ -267,7 +278,7 @@ object NetworkTools {
             val request = Request.Builder()
                 .url("https://$serverName/dns-query")
                 .header("Accept", "application/dns-message")
-                .header("User-Agent", "FranProbe/2.0.2")
+                .header("User-Agent", "FranProbe/${BuildConfig.VERSION_NAME}")
                 .post(query.bytes.toRequestBody("application/dns-message".toMediaType()))
                 .build()
 
@@ -335,7 +346,8 @@ object NetworkTools {
             sni = sni,
             protocolPreference = protocolPreference,
             alpn = alpn,
-            timeoutMs = timeoutMs
+            timeoutMs = timeoutMs,
+            validateCertificate = false
         ).use { socket ->
             val session = socket.session
             val certificate = session.peerCertificates.firstOrNull() as? X509Certificate
@@ -344,16 +356,30 @@ object NetworkTools {
             val matches = normalizedSni?.let { host -> certificate?.let { certificateMatchesHost(it, host) } }
 
             var statusLine: String? = null
+            var httpErrorType: String? = null
+            var httpErrorMessage: String? = null
             if (sendHttpRequest && (Build.VERSION.SDK_INT < 29 || socket.applicationProtocol != "h2")) {
                 val host = hostHeader?.takeIf { it.isNotBlank() } ?: normalizedSni ?: ip
-                val output = BufferedOutputStream(socket.outputStream)
-                output.write(
-                    "GET / HTTP/1.1\r\nHost: $host\r\nUser-Agent: FranProbe/2.0.2\r\nConnection: close\r\nAccept: */*\r\n\r\n"
-                        .toByteArray(Charsets.US_ASCII)
-                )
-                output.flush()
-                val input = BufferedInputStream(socket.inputStream)
-                statusLine = input.readAsciiLine(2048)
+                runCatching {
+                    val output = BufferedOutputStream(socket.outputStream)
+                    output.write(
+                        "GET / HTTP/1.1\r\nHost: $host\r\nUser-Agent: FranProbe/${BuildConfig.VERSION_NAME}\r\nConnection: close\r\nAccept: */*\r\n\r\n"
+                            .toByteArray(Charsets.US_ASCII)
+                    )
+                    output.flush()
+                    val input = BufferedInputStream(socket.inputStream)
+                    input.readAsciiLine(2048)
+                }.onSuccess { line ->
+                    statusLine = line
+                    if (line == null) {
+                        httpErrorType = "EmptyHttpResponse"
+                        httpErrorMessage = "TLS прошёл, но сервер закрыл соединение без строки HTTP-статуса"
+                    }
+                }.onFailure { httpError ->
+                    val root = generateSequence(httpError) { it.cause }.last()
+                    httpErrorType = root::class.java.name
+                    httpErrorMessage = root.message ?: root::class.java.simpleName
+                }
             }
 
             val selectedAlpn = if (Build.VERSION.SDK_INT >= 29) {
@@ -372,6 +398,8 @@ object NetworkTools {
                 certificateSans = sans,
                 certificateMatchesSni = matches,
                 httpStatusLine = statusLine,
+                httpErrorType = httpErrorType,
+                httpErrorMessage = httpErrorMessage,
                 elapsedMs = elapsedMs(started)
             )
         }
@@ -390,16 +418,20 @@ object NetworkTools {
             socket.soTimeout = timeoutMs
             socket.connect(InetSocketAddress(InetAddress.getByName(ip), port))
             val payload = byteArrayOf(0x46, 0x52, 0x41, 0x4E, 0x50, 0x52, 0x4F, 0x42, 0x45)
-            socket.send(DatagramPacket(payload, payload.size))
+            var portUnreachable = false
             val responseBytes = try {
+                socket.send(DatagramPacket(payload, payload.size))
                 val buffer = ByteArray(2048)
                 val response = DatagramPacket(buffer, buffer.size)
                 socket.receive(response)
                 response.length
             } catch (_: java.net.SocketTimeoutException) {
                 null
+            } catch (_: PortUnreachableException) {
+                portUnreachable = true
+                null
             }
-            UdpProbeData(ip, port, responseBytes, elapsedMs(started))
+            UdpProbeData(ip, port, responseBytes, portUnreachable, elapsedMs(started))
         }
     }
 
@@ -416,7 +448,8 @@ object NetworkTools {
         sni: String?,
         protocolPreference: List<String>,
         alpn: List<String>,
-        timeoutMs: Int
+        timeoutMs: Int,
+        validateCertificate: Boolean
     ): SSLSocket {
         val rawSocket = network.socketFactory.createSocket()
         try {
@@ -424,19 +457,29 @@ object NetworkTools {
             rawSocket.connect(InetSocketAddress(InetAddress.getByName(ip), port), timeoutMs)
 
             val context = SSLContext.getInstance("TLS")
-            context.init(null, arrayOf<TrustManager>(DiagnosticTrustManager), SecureRandom())
-            val socket = context.socketFactory.createSocket(rawSocket, ip, port, true) as SSLSocket
+            if (validateCertificate) {
+                // DoT/служебные TLS-проверки должны доверять только штатному хранилищу Android.
+                context.init(null, null, SecureRandom())
+            } else {
+                // Матрица SNI намеренно принимает рукопожатие с любым сертификатом,
+                // чтобы отдельно показать Subject/SAN и ручное совпадение имени.
+                context.init(null, arrayOf<TrustManager>(DiagnosticTrustManager), SecureRandom())
+            }
+            val peerHost = sni?.trim()?.trimEnd('.')?.takeIf { it.isNotBlank() } ?: ip
+            val socket = context.socketFactory.createSocket(rawSocket, peerHost, port, true) as SSLSocket
             socket.soTimeout = timeoutMs
 
             val supported = socket.supportedProtocols.toSet()
             val enabled = protocolPreference.filter { it in supported }
-            require(enabled.isNotEmpty()) {
-                "Запрошенные версии TLS не поддерживаются устройством: ${protocolPreference.joinToString()}"
+            if (enabled.isEmpty()) {
+                throw LocalCapabilityException(
+                    "Устройство не поддерживает запрошенные версии TLS: ${protocolPreference.joinToString()}"
+                )
             }
             socket.enabledProtocols = enabled.toTypedArray()
 
             val parameters = socket.sslParameters
-            parameters.endpointIdentificationAlgorithm = null
+            parameters.endpointIdentificationAlgorithm = if (validateCertificate) "HTTPS" else null
             parameters.serverNames = if (!sni.isNullOrBlank() && !isIpLiteral(sni)) {
                 listOf(SNIHostName(sni.trim().trimEnd('.')))
             } else {
@@ -520,6 +563,7 @@ object NetworkTools {
 
     // Только для диагностических TLS-проб: сертификат сохраняется и сравнивается вручную.
     // Пользовательские данные через эти соединения не передаются.
+    @SuppressLint("CustomX509TrustManager", "TrustAllX509TrustManager")
     private object DiagnosticTrustManager : X509TrustManager {
         override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
         override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit

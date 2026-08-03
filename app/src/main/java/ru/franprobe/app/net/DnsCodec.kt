@@ -58,26 +58,35 @@ object DnsCodec {
                 "DNS transaction ID не совпадает: ожидался ${expected.transactionId}, получен $id"
             }
             require(isResponse) { "Получен пакет, который не является DNS-ответом" }
+            require(qdCount == 1) { "DNS-ответ должен содержать ровно один исходный вопрос, получено: $qdCount" }
         }
 
         var questionName: String? = null
         var questionType: Int? = null
+        var questionClass: Int? = null
         repeat(qdCount) { index ->
             val name = reader.name()
             val type = reader.u16()
-            reader.u16() // class
+            val clazz = reader.u16()
             if (index == 0) {
                 questionName = name
                 questionType = type
+                questionClass = clazz
             }
         }
 
-        if (expected != null && questionName != null) {
+        if (expected != null) {
+            require(questionName != null && questionType != null) {
+                "DNS-ответ не содержит исходный вопрос"
+            }
             require(normalizeDomain(questionName!!) == normalizeDomain(expected.domain)) {
                 "DNS-ответ относится к другому имени: $questionName"
             }
             require(questionType == expected.type.code) {
                 "DNS-ответ относится к другому типу: $questionType"
+            }
+            require(questionClass == 1) {
+                "DNS-ответ относится к другому классу: $questionClass"
             }
         }
 
@@ -93,6 +102,7 @@ object DnsCodec {
             rcode = rcode,
             questionName = questionName,
             questionType = questionType,
+            questionClass = questionClass,
             questionCount = qdCount,
             answerCount = anCount,
             authorityCount = nsCount,
@@ -110,6 +120,7 @@ object DnsCodec {
         val clazz = reader.u16()
         val ttl = reader.u32()
         val dataLength = reader.u16()
+        reader.requireAvailable(dataLength)
         val start = reader.position
         val value = when {
             clazz != 1 -> null
@@ -214,8 +225,12 @@ object DnsCodec {
             }
         }
 
+        fun requireAvailable(length: Int) {
+            ensure(length)
+        }
+
         private fun ensure(length: Int) {
-            require(position + length <= data.size) { "DNS-пакет неожиданно закончился" }
+            require(length >= 0 && position <= data.size - length) { "DNS-пакет неожиданно закончился" }
         }
     }
 }

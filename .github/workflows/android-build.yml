@@ -12,11 +12,15 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v6
+
+      - name: Prepare diagnostics directory
+        shell: bash
+        run: mkdir -p ci-logs
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -24,23 +28,33 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Validate source tree
-        run: python3 scripts/validate_source.py
-
       - name: Set up Gradle 9.5.0
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "9.5.0"
+          cache-cleanup: always
 
       - name: Generate and verify Gradle Wrapper
         shell: bash
         run: |
           set -euo pipefail
-          gradle wrapper \
-            --gradle-version 9.5.0 \
-            --distribution-type bin \
-            --gradle-distribution-sha256-sum 553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746
-          chmod +x gradlew
+          exec > >(tee ci-logs/bootstrap-wrapper.log) 2>&1
+          temporary_project="$(mktemp -d)"
+          trap 'rm -rf "$temporary_project"' EXIT
+          printf 'rootProject.name = "wrapper-bootstrap"\n' > "$temporary_project/settings.gradle.kts"
+          printf 'tasks.wrapper { distributionType = Wrapper.DistributionType.BIN }\n' > "$temporary_project/build.gradle.kts"
+          (
+            cd "$temporary_project"
+            gradle wrapper \
+              --gradle-version 9.5.0 \
+              --distribution-type bin \
+              --gradle-distribution-sha256-sum 553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746
+          )
+          mkdir -p gradle/wrapper
+          cp "$temporary_project/gradlew" "$temporary_project/gradlew.bat" ./
+          cp "$temporary_project/gradle/wrapper/gradle-wrapper.jar" gradle/wrapper/
+          cp "$temporary_project/gradle/wrapper/gradle-wrapper.properties" gradle/wrapper/
+          chmod +x gradlew scripts/run_ci_checks.sh
           echo "497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
           grep -q '^distributionSha256Sum=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746$' gradle/wrapper/gradle-wrapper.properties
           ./gradlew --version
@@ -48,43 +62,39 @@ jobs:
       - name: Install Android SDK components
         shell: bash
         run: |
+          set -euo pipefail
+          exec > >(tee ci-logs/bootstrap-android-sdk.log) 2>&1
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platforms;android-36" \
             "build-tools;36.0.0"
 
-      - name: Verify resolved dependency versions
+      - name: Run all mandatory checks
         shell: bash
-        run: |
-          set -euo pipefail
-          ./gradlew :app:verifyApi36Dependencies --stacktrace --no-daemon
-          ./gradlew :app:dependencies \
-            --configuration debugRuntimeClasspath \
-            --no-daemon > dependency-report.txt
-
-      - name: Unit tests, lint and APK
-        run: ./gradlew clean testDebugUnitTest lintDebug assembleDebug --stacktrace --no-daemon
+        run: scripts/run_ci_checks.sh
 
       - name: Copy APK with readable name
-        run: cp app/build/outputs/apk/debug/app-debug.apk FranProbe-2.0.3-debug.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk FranProbe-2.0.4-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: FranProbe-debug-APK
-          path: FranProbe-2.0.3-debug.apk
+          path: FranProbe-2.0.4-debug.apk
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload test and lint reports
+      - name: Upload complete build diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: FranProbe-build-reports
+          name: FranProbe-build-diagnostics
           path: |
+            ci-logs/
             app/build/reports/tests/
             app/build/reports/lint-results-debug.html
             app/build/reports/lint-results-debug.xml
-            dependency-report.txt
+            app/build/reports/lint-results-debug.txt
+            app/build/test-results/
           if-no-files-found: ignore
           retention-days: 14

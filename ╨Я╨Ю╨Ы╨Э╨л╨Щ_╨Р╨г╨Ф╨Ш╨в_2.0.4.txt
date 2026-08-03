@@ -1,0 +1,110 @@
+FranProbe 2.0.4 — ПОЛНЫЙ АУДИТ
+Дата: 03.08.2026
+
+1. РАЗБОР ПОСЛЕДНЕГО GITHUB ACTIONS
+
+Из архива logs_83598848629.zip извлечены общий лог и отдельные логи шагов.
+Gradle Wrapper, JDK 17 и Android SDK Platform 36 установились успешно.
+Единственный фактически выполненный Gradle build-step завершился на:
+
+  :app:verifyApi36Dependencies FAILED
+  Expected androidx.lifecycle:lifecycle-runtime-ktx:2.9.4, resolved []
+
+Это была ошибка собственной ручной проверки проекта. Она проверяла внутреннюю
+форму runtime dependency graph и ошибочно считала отсутствие отдельного JAR
+ошибкой, хотя Lifecycle может быть представлен в графе иначе. Из-за fail-fast
+следующие этапы вообще не запускались, поэтому этот лог не содержал ошибок
+Kotlin, ресурсов, unit-тестов, lint или APK.
+
+2. ИСПРАВЛЕНИЯ СБОРКИ
+
+- verifyApi36Dependencies полностью удалена.
+- Удалены неиспользуемые lifecycle-runtime-ktx и lifecycle-viewmodel-compose.
+- Оставлена реально используемая lifecycle-viewmodel-ktx 2.9.4.
+- Явно закреплена activity-ktx 1.11.0 для делегата viewModels().
+- AndroidX Core принудительно закреплён на 1.17.0.
+- Compose BOM закреплён на 2025.08.00.
+- compileSdk/targetSdk: 36; Build Tools: 36.0.0.
+- AGP: 9.3.0; Gradle: 9.5.0; JDK: 17; Compose compiler plugin: 2.3.21.
+- Wrapper генерируется в изолированном временном проекте и проверяется SHA-256.
+
+3. НОВАЯ ЛОГИКА CI — НЕ ПО ОДНОЙ ОШИБКЕ
+
+scripts/run_ci_checks.sh выполняет и записывает результат каждого этапа:
+
+00 environment
+01 source validation
+02 clean
+03 dependencies
+04 Core dependency insight
+05 Lifecycle dependency insight
+06 Compose dependency insight
+07 AAR metadata
+08 AndroidManifest
+09 resources
+10 main Kotlin compile
+11 unit-test Kotlin compile
+12 unit tests
+13 Android Lint
+14 assemble APK
+
+Отказ одного этапа не прекращает попытки выполнить остальные. После всех
+этапов создаётся 00-summary.txt, а workflow получает exit code 1, если был хотя
+бы один провал. Ошибки не скрываются через continue-on-error.
+
+Bootstrap-логи создания Wrapper и установки SDK теперь сохраняются: ранее
+агрегатор очищал всю папку ci-logs, что уничтожило бы эти два полезных файла.
+
+4. АУДИТ ДИАГНОСТИЧЕСКОЙ ЛОГИКИ
+
+- System DNS выполняется через runInterruptible и ограничен coroutine timeout.
+- Прямой DNS проверяет transaction ID, QR, ровно один исходный вопрос, имя,
+  record type и class IN.
+- Проверяются границы DNS-пакета и RDATA до чтения.
+- Обрезанный UDP DNS-ответ получает LIMITED и автоматически повторяется по TCP.
+- FULL mode не прекращает сравнение после первого доступного резолвера.
+- TCP/TLS не запускаются без реального IP и получают NOT_TESTED.
+- TLS 1.2/1.3, SNI, Host и ALPN разделены.
+- Неподдерживаемая локально версия TLS получает NOT_TESTED.
+- На Android ниже API 29 ALPN через SSLSocket получает NOT_TESTED, а не ложный
+  результат сети.
+- Успешный TLS не теряется, если последующая HTTP-проба дала timeout/EOF.
+- DoT использует Android trust store и hostname verification.
+- SNI matrix намеренно принимает любой сертификат только для чтения Subject/SAN;
+  это явно отмечается в отчёте.
+- DoH использует заданный IP, выбранную Network и Proxy.NO_PROXY.
+- UDP timeout остаётся INCONCLUSIVE; Port Unreachable фиксируется отдельно.
+
+5. ОТЧЁТЫ И КОНФИДЕНЦИАЛЬНОСТЬ
+
+- Экспорт содержит TXT, JSON, CSV, RAW.LOG и README.
+- История ограничена 20 ZIP.
+- Временный cache/exports ZIP удаляется после сохранения или отмены.
+- android:allowBackup=false.
+- reports/ и cache исключены из backup/device transfer rules.
+- Телеметрии и собственного сервера нет.
+
+6. РЕАЛЬНО ВЫПОЛНЕННЫЕ ПРОВЕРКИ
+
+PASS  Полный поиск FAILURE/FAILED/ERROR/Caused by в свежем архиве логов.
+PASS  Python source-tree validator.
+PASS  XML parser для всех Android XML.
+PASS  YAML parser для workflow.
+PASS  bash -n для CI-скрипта.
+PASS  Kotlin typecheck: model + DNS + NetworkTools + DiagnosticEngine + exporter.
+PASS  Kotlin typecheck: MainActivity + MainViewModel + Compose UI + theme.
+PASS  Kotlin typecheck: 13 unit-тестов.
+PASS  Runtime smoke: IPv4/IPv6 literals, DNS A, txid, class IN, RDATA bounds.
+PASS  CI success simulation: 15 exit-code файлов, assemble и два bootstrap-лога.
+PASS  CI multi-failure simulation: Kotlin и lint провалены одновременно,
+      assemble всё равно запущен, оба провала записаны в summary.
+PASS  Поиск TODO/FIXME/NUL, package/path mismatch и старых версий.
+
+7. ОГРАНИЧЕНИЕ ПРОВЕРКИ
+
+В данной рабочей среде нет Android SDK и полного офлайн-кэша Google/Maven.
+Поэтому нельзя честно заявить, что здесь выполнен настоящий assembleDebug.
+Следующий GitHub Actions является финальной реальной Android-компиляцией.
+Но в отличие от предыдущих версий он не остановится на первой Gradle-задаче:
+при ошибке он отдаст один диагностический артефакт со всеми выполненными
+этапами и их отдельными логами.

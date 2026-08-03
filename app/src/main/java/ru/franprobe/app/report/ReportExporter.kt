@@ -43,7 +43,11 @@ object ReportExporter {
         val directory = File(context.filesDir, "reports").apply { mkdirs() }
         val file = File(directory, suggestedFileName(report))
         val temporary = createZip(context, report)
-        temporary.copyTo(file, overwrite = true)
+        try {
+            temporary.copyTo(file, overwrite = true)
+        } finally {
+            temporary.delete()
+        }
         trimHistory(directory, 20)
         return file
     }

@@ -19,6 +19,7 @@ data class DnsMessage(
     val rcode: Int,
     val questionName: String?,
     val questionType: Int?,
+    val questionClass: Int?,
     val questionCount: Int,
     val answerCount: Int,
     val authorityCount: Int,

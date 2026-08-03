@@ -2,6 +2,7 @@ package ru.franprobe.app.engine
 
 import android.content.Context
 import android.net.Network
+import android.os.Build
 import kotlinx.coroutines.CancellationException
 import ru.franprobe.app.BuildConfig
 import ru.franprobe.app.model.DiagnosticConfig
@@ -14,6 +15,7 @@ import ru.franprobe.app.model.ProbeStatus
 import ru.franprobe.app.model.RunProgress
 import ru.franprobe.app.model.TestLayer
 import ru.franprobe.app.net.NetworkEnvironment
+import ru.franprobe.app.net.LocalCapabilityException
 import ru.franprobe.app.net.NetworkTools
 import ru.franprobe.app.net.RemoteProtocolException
 import java.net.ConnectException
@@ -85,7 +87,7 @@ class DiagnosticEngine(context: Context) {
                         layer = TestLayer.DNS,
                         name = "DNS по UDP",
                         target = "$resolver:53 / example.com A",
-                        status = dnsStatus(data.message.rcode, addresses),
+                        status = dnsStatus(data.message.rcode, addresses, data.message.truncated),
                         summary = dnsSummary(data.message.rcode, addresses, data.message.truncated),
                         durationMs = data.elapsedMs,
                         details = mapOf(
@@ -109,7 +111,7 @@ class DiagnosticEngine(context: Context) {
                             layer = TestLayer.DNS,
                             name = "DNS по TCP",
                             target = "$resolver:53 / example.com A",
-                            status = dnsStatus(data.message.rcode, addresses),
+                            status = dnsStatus(data.message.rcode, addresses, data.message.truncated),
                             summary = dnsSummary(data.message.rcode, addresses, data.message.truncated),
                             durationMs = data.elapsedMs,
                             details = mapOf(
@@ -200,7 +202,7 @@ class DiagnosticEngine(context: Context) {
                         layer = TestLayer.DNS,
                         name = "DNS over TLS",
                         target = "${endpoint.ip}:853 / SNI=${endpoint.dotName} (${endpoint.label})",
-                        status = dnsStatus(data.message.rcode, data.message.addresses),
+                        status = dnsStatus(data.message.rcode, data.message.addresses, data.message.truncated),
                         summary = dnsSummary(data.message.rcode, data.message.addresses, data.message.truncated),
                         durationMs = data.elapsedMs,
                         details = mapOf(
@@ -230,7 +232,7 @@ class DiagnosticEngine(context: Context) {
                         layer = TestLayer.DNS,
                         name = "DNS over HTTPS",
                         target = "${endpoint.ip}:443 / https://${endpoint.dohName}/dns-query (${endpoint.label})",
-                        status = dnsStatus(data.message.rcode, data.message.addresses),
+                        status = dnsStatus(data.message.rcode, data.message.addresses, data.message.truncated),
                         summary = "${data.httpStatusLine}; ${dnsSummary(data.message.rcode, data.message.addresses, data.message.truncated)}",
                         durationMs = data.elapsedMs,
                         details = mapOf(
@@ -285,13 +287,43 @@ class DiagnosticEngine(context: Context) {
             )
             progress("Системное DNS: $domain")
 
-            val resolvedIps = systemAddresses.mapNotNull { it.hostAddress }.toMutableList()
-            if (resolvedIps.isEmpty()) {
-                val rawResolution = resolveViaConfiguredDns(network, config, domain, results, progress)
-                resolvedIps += rawResolution
+            val systemIps = systemAddresses.mapNotNull { it.hostAddress }.distinct()
+            val directIps = if (config.mode == DiagnosticMode.FULL || systemIps.isEmpty()) {
+                resolveViaConfiguredDns(network, config, domain, results, progress)
+            } else {
+                emptyList()
             }
 
-            val uniqueIps = resolvedIps.distinct()
+            if (config.mode == DiagnosticMode.FULL && systemIps.isNotEmpty() && directIps.isNotEmpty()) {
+                val systemSet = systemIps.toSet()
+                val directSet = directIps.toSet()
+                val overlap = systemSet.intersect(directSet)
+                val same = systemSet == directSet
+                results += ProbeResult(
+                    layer = TestLayer.DNS,
+                    name = "Сравнение DNS-ответов",
+                    target = domain,
+                    status = when {
+                        same -> ProbeStatus.AVAILABLE
+                        overlap.isNotEmpty() -> ProbeStatus.LIMITED
+                        else -> ProbeStatus.LIMITED
+                    },
+                    summary = when {
+                        same -> "Системный и прямой DNS вернули одинаковые адреса"
+                        overlap.isNotEmpty() -> "Наборы DNS-адресов различаются, но имеют общие значения"
+                        else -> "Системный и прямой DNS вернули полностью разные адреса"
+                    },
+                    durationMs = 0,
+                    details = mapOf(
+                        "systemAddresses" to systemIps.joinToString(),
+                        "directAddresses" to directIps.joinToString(),
+                        "commonAddresses" to overlap.joinToString()
+                    )
+                )
+                progress("Сопоставлены DNS-ответы для $domain")
+            }
+
+            val uniqueIps = (systemIps + directIps).distinct()
             if (uniqueIps.isEmpty()) {
                 results += notTested(
                     TestLayer.TCP,
@@ -366,10 +398,11 @@ class DiagnosticEngine(context: Context) {
                         layer = TestLayer.TLS,
                         name = "TLS с правильным SNI",
                         target = "$tlsIp:443 / SNI=$domain",
-                        status = if (mismatch) ProbeStatus.LIMITED else ProbeStatus.AVAILABLE,
+                        status = if (mismatch || data.httpErrorType != null) ProbeStatus.LIMITED else ProbeStatus.AVAILABLE,
                         summary = when {
                             mismatch -> "TLS прошёл, но сертификат не соответствует SNI"
                             data.httpStatusLine != null -> "TLS и HTTP ответили: ${data.httpStatusLine}"
+                            data.httpErrorType != null -> "TLS-рукопожатие успешно, но HTTP-проба завершилась отдельно: ${data.httpErrorMessage}"
                             else -> "TLS-рукопожатие успешно"
                         },
                         durationMs = data.elapsedMs,
@@ -418,7 +451,7 @@ class DiagnosticEngine(context: Context) {
                             layer = TestLayer.DNS,
                             name = "Прямое DNS-разрешение",
                             target = "$resolver:53 / $domain ${recordType.name}",
-                            status = dnsStatus(data.message.rcode, answers),
+                            status = dnsStatus(data.message.rcode, answers, truncated),
                             summary = dnsSummary(data.message.rcode, answers, truncated),
                             durationMs = data.elapsedMs,
                             details = mapOf(
@@ -456,7 +489,7 @@ class DiagnosticEngine(context: Context) {
                                 layer = TestLayer.DNS,
                                 name = "Повтор DNS по TCP",
                                 target = "$resolver:53 / $domain ${recordType.name}",
-                                status = dnsStatus(data.message.rcode, answers),
+                                status = dnsStatus(data.message.rcode, answers, data.message.truncated),
                                 summary = dnsSummary(data.message.rcode, answers, data.message.truncated),
                                 durationMs = data.elapsedMs,
                                 details = mapOf(
@@ -473,7 +506,7 @@ class DiagnosticEngine(context: Context) {
                     progress("Повтор DNS/TCP $domain через $resolver")
                 }
             }
-            if (collected.isNotEmpty()) break
+            if (config.mode == DiagnosticMode.QUICK && collected.isNotEmpty()) break
         }
         return collected.distinct()
     }
@@ -556,10 +589,15 @@ class DiagnosticEngine(context: Context) {
                             layer = TestLayer.TLS,
                             name = "Матрица SNI — $tlsVersion",
                             target = "$ip:${config.customMatrixPort} / $title",
-                            status = if (data.certificateMatchesSni == false) ProbeStatus.LIMITED else ProbeStatus.AVAILABLE,
+                            status = if (data.certificateMatchesSni == false || data.httpErrorType != null) {
+                                ProbeStatus.LIMITED
+                            } else {
+                                ProbeStatus.AVAILABLE
+                            },
                             summary = buildString {
                                 append("TLS прошёл")
                                 data.httpStatusLine?.let { append(", HTTP: $it") }
+                                data.httpErrorMessage?.let { append(", HTTP-проба: $it") }
                                 if (data.certificateMatchesSni == false) append(", сертификат не совпадает")
                             },
                             durationMs = data.elapsedMs,
@@ -594,9 +632,16 @@ class DiagnosticEngine(context: Context) {
                         layer = TestLayer.HTTP,
                         name = "HTTP Host без SNI",
                         target = "$ip:${config.customMatrixPort} / без SNI / Host=$host",
-                        status = ProbeStatus.AVAILABLE,
-                        summary = data.httpStatusLine?.let { "TLS без SNI прошёл, HTTP ответил: $it" }
-                            ?: "TLS без SNI прошёл; HTTP не вернул строку статуса",
+                        status = when {
+                            data.httpStatusLine != null -> ProbeStatus.AVAILABLE
+                            data.httpErrorType != null -> ProbeStatus.LIMITED
+                            else -> ProbeStatus.INCONCLUSIVE
+                        },
+                        summary = when {
+                            data.httpStatusLine != null -> "TLS без SNI прошёл, HTTP ответил: ${data.httpStatusLine}"
+                            data.httpErrorType != null -> "TLS без SNI прошёл, но HTTP-проба завершилась отдельно: ${data.httpErrorMessage}"
+                            else -> "TLS без SNI прошёл; HTTP не вернул строку статуса"
+                        },
                         durationMs = data.elapsedMs,
                         details = tlsDetails(data) + mapOf("hostHeader" to host)
                     )
@@ -607,34 +652,48 @@ class DiagnosticEngine(context: Context) {
 
         val h2Sni = candidates.firstOrNull { it != null }
         if (h2Sni != null) {
-            results += runProbe(
-                layer = TestLayer.TLS,
-                name = "ALPN HTTP/2",
-                target = "$ip:${config.customMatrixPort} / SNI=$h2Sni",
-                success = {
-                    val data = NetworkTools.tlsHandshake(
-                        network = network,
-                        ip = ip,
-                        port = config.customMatrixPort,
-                        sni = h2Sni,
-                        hostHeader = null,
-                        protocolPreference = listOf("TLSv1.3", "TLSv1.2"),
-                        alpn = listOf("h2", "http/1.1"),
-                        timeoutMs = config.readTimeoutMs,
-                        sendHttpRequest = false
-                    )
-                    ProbeResult(
-                        layer = TestLayer.TLS,
-                        name = "ALPN HTTP/2",
-                        target = "$ip:${config.customMatrixPort} / SNI=$h2Sni",
-                        status = ProbeStatus.AVAILABLE,
-                        summary = "TLS прошёл, выбран ALPN: ${data.selectedAlpn ?: "не выбран"}",
-                        durationMs = data.elapsedMs,
-                        details = tlsDetails(data)
-                    )
-                }
-            )
-            progress("Проверен ALPN h2")
+            if (Build.VERSION.SDK_INT < 29) {
+                results += notTested(
+                    TestLayer.TLS,
+                    "ALPN HTTP/2",
+                    "$ip:${config.customMatrixPort} / SNI=$h2Sni",
+                    "Android ниже API 29 не позволяет FranProbe надёжно задать и прочитать ALPN через SSLSocket."
+                )
+                progress("ALPN h2 не проверен: API устройства ниже 29")
+            } else {
+                results += runProbe(
+                    layer = TestLayer.TLS,
+                    name = "ALPN HTTP/2",
+                    target = "$ip:${config.customMatrixPort} / SNI=$h2Sni",
+                    success = {
+                        val data = NetworkTools.tlsHandshake(
+                            network = network,
+                            ip = ip,
+                            port = config.customMatrixPort,
+                            sni = h2Sni,
+                            hostHeader = null,
+                            protocolPreference = listOf("TLSv1.3", "TLSv1.2"),
+                            alpn = listOf("h2", "http/1.1"),
+                            timeoutMs = config.readTimeoutMs,
+                            sendHttpRequest = false
+                        )
+                        ProbeResult(
+                            layer = TestLayer.TLS,
+                            name = "ALPN HTTP/2",
+                            target = "$ip:${config.customMatrixPort} / SNI=$h2Sni",
+                            status = if (data.selectedAlpn == "h2") ProbeStatus.AVAILABLE else ProbeStatus.LIMITED,
+                            summary = when (data.selectedAlpn) {
+                                "h2" -> "TLS прошёл, сервер выбрал ALPN h2"
+                                null -> "TLS прошёл, но сервер не выбрал ALPN"
+                                else -> "TLS прошёл, но вместо h2 выбран ALPN ${data.selectedAlpn}"
+                            },
+                            durationMs = data.elapsedMs,
+                            details = tlsDetails(data)
+                        )
+                    }
+                )
+                progress("Проверен ALPN h2")
+            }
         }
     }
 
@@ -679,14 +738,21 @@ class DiagnosticEngine(context: Context) {
                         layer = TestLayer.UDP,
                         name = "UDP 443 — ответный пробник",
                         target = "$ip:443 ($label)",
-                        status = if (data.responseBytes != null) ProbeStatus.AVAILABLE else ProbeStatus.INCONCLUSIVE,
-                        summary = if (data.responseBytes != null) {
-                            "Получен UDP-ответ: ${data.responseBytes} байт"
-                        } else {
-                            "Ответа нет. Это не доказывает блокировку: произвольный UDP-пакет сервер может игнорировать."
+                        status = when {
+                            data.responseBytes != null -> ProbeStatus.AVAILABLE
+                            data.portUnreachable -> ProbeStatus.LIMITED
+                            else -> ProbeStatus.INCONCLUSIVE
+                        },
+                        summary = when {
+                            data.responseBytes != null -> "Получен UDP-ответ: ${data.responseBytes} байт"
+                            data.portUnreachable -> "Получен ICMP/UDP Port Unreachable: путь до узла есть, но UDP-порт отклонён."
+                            else -> "Ответа нет. Это не доказывает блокировку: произвольный UDP-пакет сервер может игнорировать."
                         },
                         durationMs = data.elapsedMs,
-                        details = mapOf("responseBytes" to (data.responseBytes?.toString() ?: "none"))
+                        details = mapOf(
+                            "responseBytes" to (data.responseBytes?.toString() ?: "none"),
+                            "portUnreachable" to data.portUnreachable.toString()
+                        )
                     )
                 }
             )
@@ -735,6 +801,8 @@ class DiagnosticEngine(context: Context) {
             is SSLException -> ProbeStatus.LIMITED to "TLS-соединение завершилось ошибкой после TCP."
             is RemoteProtocolException -> ProbeStatus.LIMITED to
                 (root.message ?: "Удалённый сервис ответил протокольной ошибкой.")
+            is LocalCapabilityException -> ProbeStatus.NOT_TESTED to
+                (root.message ?: "Проверка не поддерживается этим устройством.")
             is java.net.UnknownHostException -> ProbeStatus.UNREACHABLE to "DNS не вернул адрес."
             is IllegalArgumentException -> ProbeStatus.ERROR to (root.message ?: "Некорректные входные данные")
             else -> ProbeStatus.ERROR to (root.message ?: root::class.java.simpleName)
@@ -803,16 +871,17 @@ class DiagnosticEngine(context: Context) {
         durationMs = 0
     )
 
-    private fun dnsStatus(rcode: Int, addresses: List<String>): ProbeStatus = when {
+    private fun dnsStatus(rcode: Int, addresses: List<String>, truncated: Boolean): ProbeStatus = when {
         rcode != 0 -> ProbeStatus.LIMITED
+        truncated -> ProbeStatus.LIMITED
         addresses.isEmpty() -> ProbeStatus.LIMITED
         else -> ProbeStatus.AVAILABLE
     }
 
     private fun dnsSummary(rcode: Int, addresses: List<String>, truncated: Boolean): String = when {
         rcode != 0 -> "DNS ответил с RCODE=$rcode"
+        truncated -> "DNS ответил обрезанным пакетом; результат неполный, выполняется повтор по TCP"
         addresses.isEmpty() -> "DNS ответил, но адресов A/AAAA нет"
-        truncated -> "DNS ответил, пакет обрезан; нужен повтор по TCP"
         else -> "DNS ответил: ${addresses.joinToString()}"
     }
 
@@ -821,12 +890,17 @@ class DiagnosticEngine(context: Context) {
         "rcode" to message.rcode.toString(),
         "question" to (message.questionName ?: "—"),
         "questionType" to (message.questionType?.toString() ?: "—"),
+        "questionClass" to (message.questionClass?.toString() ?: "—"),
         "questionCount" to message.questionCount.toString(),
         "answerCount" to message.answerCount.toString(),
         "authorityCount" to message.authorityCount.toString(),
         "additionalCount" to message.additionalCount.toString(),
         "truncated" to message.truncated.toString(),
         "answers" to message.addresses.joinToString(),
+        "answerRecords" to message.answers.joinToString(" | ") {
+            "${it.name} type=${it.type} ttl=${it.ttl} value=${it.value}"
+        },
+        "minAnswerTtl" to (message.answers.minOfOrNull { it.ttl }?.toString() ?: "—"),
         "rawBytes" to message.rawSize.toString(),
         "rawPreviewHex" to message.rawPreviewHex
     )
@@ -848,6 +922,8 @@ class DiagnosticEngine(context: Context) {
         "certificateSans" to data.certificateSans.joinToString(),
         "certificateMatchesSni" to (data.certificateMatchesSni?.toString() ?: "—"),
         "httpStatusLine" to (data.httpStatusLine ?: "—"),
+        "httpErrorType" to (data.httpErrorType ?: "—"),
+        "httpErrorMessage" to (data.httpErrorMessage ?: "—"),
         "certificateTrustValidated" to "false (диагностический режим; Subject/SAN анализируются отдельно)"
     )
 
@@ -884,12 +960,25 @@ class DiagnosticEngine(context: Context) {
         return conclusions.distinct()
     }
 
-    private fun estimateSteps(config: DiagnosticConfig): Int = when (config.mode) {
-        DiagnosticMode.QUICK -> 1 + 4 + 3 * 5
-        DiagnosticMode.FULL -> 1 + config.dnsServers.size * 2 + 6 + config.targetDomains.size * 9 + 6
-        DiagnosticMode.SNI_MATRIX -> 1 + config.dnsServers.size * 2 + 1 +
-            (config.sniCandidates.size + 1).coerceAtMost(21) * 2 + config.sniCandidates.size.coerceAtMost(5) + 1
-    }.coerceAtLeast(1)
+    private fun estimateSteps(config: DiagnosticConfig): Int {
+        val resolverCount = config.dnsServers.distinct().size.coerceAtLeast(1)
+        val maxTcpPerDomain = config.maxResolvedIpsPerDomain.coerceAtLeast(1) * 2
+        return when (config.mode) {
+            DiagnosticMode.QUICK -> {
+                val initialDns = 4
+                val perDomain = 1 + resolverCount + maxTcpPerDomain + 1
+                1 + initialDns + 3 * perDomain
+            }
+            DiagnosticMode.FULL -> {
+                val initialDns = resolverCount * 2 + 6
+                val perDomainWorstCase = 1 + resolverCount * 4 + 1 + maxTcpPerDomain + 1
+                1 + initialDns + config.targetDomains.size * perDomainWorstCase + 6
+            }
+            DiagnosticMode.SNI_MATRIX -> 1 + resolverCount * 2 + 1 +
+                (config.sniCandidates.size + 1).coerceAtMost(21) * 2 +
+                config.sniCandidates.size.coerceAtMost(5) + 1
+        }.coerceAtLeast(1)
+    }
 
     private fun elapsedMs(startedNanos: Long): Long = (System.nanoTime() - startedNanos) / 1_000_000
 }

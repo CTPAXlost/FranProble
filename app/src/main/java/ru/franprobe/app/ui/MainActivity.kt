@@ -20,15 +20,30 @@ class MainActivity : ComponentActivity() {
     ) { uri ->
         val source = pendingExport
         pendingExport = null
-        if (uri != null && source != null) {
-            runCatching {
-                contentResolver.openOutputStream(uri)?.use { output ->
-                    source.inputStream().use { input -> input.copyTo(output) }
-                } ?: error("Не удалось открыть выбранный файл")
-            }.onSuccess {
-                Toast.makeText(this, "Отчёт сохранён", Toast.LENGTH_SHORT).show()
-            }.onFailure { error ->
-                Toast.makeText(this, "Ошибка сохранения: ${error.message}", Toast.LENGTH_LONG).show()
+        if (source != null) {
+            try {
+                if (uri != null) {
+                    runCatching {
+                        contentResolver.openOutputStream(uri)?.use { output ->
+                            source.inputStream().use { input -> input.copyTo(output) }
+                        } ?: error("Не удалось открыть выбранный файл")
+                    }.onSuccess {
+                        Toast.makeText(this, "Отчёт сохранён", Toast.LENGTH_SHORT).show()
+                    }.onFailure { error ->
+                        Toast.makeText(this, "Ошибка сохранения: ${error.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } finally {
+                deleteTemporaryExport(source)
+            }
+        }
+    }
+
+    private fun deleteTemporaryExport(file: File) {
+        runCatching {
+            val exportDirectory = File(cacheDir, "exports").canonicalFile
+            if (file.parentFile?.canonicalFile == exportDirectory) {
+                file.delete()
             }
         }
     }

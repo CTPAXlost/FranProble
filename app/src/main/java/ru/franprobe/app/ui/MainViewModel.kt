@@ -136,6 +136,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(errorMessage = "Порт матрицы должен быть от 1 до 65535") }
             return null
         }
+        if (current.mode == DiagnosticMode.SNI_MATRIX && !NetworkTools.isIpLiteral(current.matrixIp)) {
+            _state.update { it.copy(errorMessage = "Для матрицы SNI укажите прямой IPv4 или IPv6 адрес") }
+            return null
+        }
         val dns = splitLines(current.dnsServersText)
         if (dns.isEmpty()) {
             _state.update { it.copy(errorMessage = "Добавьте хотя бы один DNS-сервер") }
