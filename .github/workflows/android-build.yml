@@ -24,41 +24,52 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Validate source tree
+        run: python3 scripts/validate_source.py
+
       - name: Set up Gradle 9.5.0
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "9.5.0"
 
       - name: Generate and verify Gradle Wrapper
+        shell: bash
         run: |
-          gradle wrapper --gradle-version 9.5.0 --distribution-type bin
+          set -euo pipefail
+          gradle wrapper \
+            --gradle-version 9.5.0 \
+            --distribution-type bin \
+            --gradle-distribution-sha256-sum 553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746
           chmod +x gradlew
-          echo "b3a875ddc1f044746e1b1a55f645584505f4a10438c1afea9f15e92a7c42ec13  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
-          if ! grep -q '^distributionSha256Sum=' gradle/wrapper/gradle-wrapper.properties; then
-            echo 'distributionSha256Sum=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746' >> gradle/wrapper/gradle-wrapper.properties
-          fi
+          echo "497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          grep -q '^distributionSha256Sum=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746$' gradle/wrapper/gradle-wrapper.properties
+          ./gradlew --version
 
       - name: Install Android SDK components
+        shell: bash
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "build-tools;36.0.0"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-37" \
+            "build-tools;36.0.0"
 
       - name: Unit tests, lint and APK
-        run: ./gradlew clean testDebugUnitTest lintDebug assembleDebug --stacktrace
+        run: ./gradlew clean testDebugUnitTest lintDebug assembleDebug --stacktrace --no-daemon
 
       - name: Copy APK with readable name
-        run: cp app/build/outputs/apk/debug/app-debug.apk FranProbe-2.0.0-debug.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk FranProbe-2.0.1-debug.apk
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: FranProbe-debug-APK
-          path: FranProbe-2.0.0-debug.apk
+          path: FranProbe-2.0.1-debug.apk
+          if-no-files-found: error
           retention-days: 30
 
       - name: Upload test and lint reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: FranProbe-build-reports
           path: |
