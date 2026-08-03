@@ -1,0 +1,39 @@
+FranProbe 2.0.5 — полный аудит исправления
+Дата: 2026-08-03
+
+РАЗБОР СВЕЖЕГО GITHUB ACTIONS
+- Gradle Wrapper: PASS
+- Android SDK 36 / Build Tools 36.0.0: PASS
+- Разрешение зависимостей: PASS
+- AAR metadata: PASS
+- AndroidManifest: PASS
+- Android resources: PASS
+- Kotlin compile: FAIL в FranProbeApp.kt:16
+
+Корневая ошибка:
+  import androidx.compose.foundation.layout.weight
+
+В Compose Foundation 1.9 weight является extension-функцией RowScope/ColumnScope.
+Её нельзя импортировать как обычную top-level функцию: компилятор разрешал имя во внутреннее
+свойство RowColumnParentData.weight и останавливал компиляцию.
+
+ИСПРАВЛЕНИЕ
+- Неверный импорт полностью удалён.
+- Все Modifier.weight(...) оставлены только внутри Row/Column content scopes.
+- В scripts/validate_source.py добавлена защита, запрещающая возвращение этого импорта.
+- Версия обновлена до 2.0.5 / versionCode 20005.
+- Имя APK обновлено до FranProbe-2.0.5-debug.apk.
+
+ПРОВЕРКИ В ЭТОМ ПАКЕТЕ
+- XML-разбор всех manifest/resource файлов.
+- Bash syntax check CI-скрипта.
+- Source validator.
+- Проверка версии, SDK и имени APK во всех конфигурациях.
+- Scope-aware Kotlin UI typecheck: RowScope/ColumnScope моделируются как receiver scopes,
+  а top-level weight отсутствует. Это специально воспроизводит API Compose 1.9 и ловит исходную ошибку.
+- DNS codec smoke tests и core typecheck сохранены без изменений функциональной логики.
+
+ОГРАНИЧЕНИЕ ЛОКАЛЬНОЙ СРЕДЫ
+Полная Android-сборка требует Android SDK/Gradle/Maven, которых нет в контейнере.
+GitHub Actions выполняет compileDebugKotlin, unit tests, lintDebug и assembleDebug и сохраняет
+единый диагностический архив, даже если один из этапов падает.

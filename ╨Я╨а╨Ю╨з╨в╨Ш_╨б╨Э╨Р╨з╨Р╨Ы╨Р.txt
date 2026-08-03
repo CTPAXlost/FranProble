@@ -1,12 +1,12 @@
-FranProbe 2.0.4
+FranProbe 2.0.5
 
 1. Распакуйте архив.
-2. Откройте внутреннюю папку FranProbe_v2.0.4.
+2. Откройте внутреннюю папку FranProbe_v2.0.5.
 3. Загрузите ЕЁ СОДЕРЖИМОЕ в корень GitHub-репозитория с полной заменой старых файлов.
 4. В корне репозитория должны находиться settings.gradle.kts, build.gradle.kts, app, scripts и скрытая папка .github.
 5. Запустите Actions → FranProbe Android build.
 6. Workflow выполнит все 15 обязательных этапов за один запуск.
-7. При успехе скачайте FranProbe-debug-APK; внутри будет FranProbe-2.0.4-debug.apk.
+7. При успехе скачайте FranProbe-debug-APK; внутри будет FranProbe-2.0.5-debug.apk.
 8. При ошибке скачайте FranProbe-build-diagnostics.
 
 В FranProbe-build-diagnostics находятся:
@@ -16,4 +16,4 @@ FranProbe 2.0.4
 - отдельные .log и .exit-code для структуры, clean, зависимостей, metadata, manifest, ресурсов, Kotlin, тестов, lint и APK;
 - стандартные отчёты unit-тестов и Android Lint, если они были созданы.
 
-Важно: не загружайте внешнюю папку FranProbe_v2.0.4 как дополнительный уровень. GitHub должен видеть файл settings.gradle.kts прямо в корне репозитория.
+Важно: не загружайте внешнюю папку FranProbe_v2.0.5 как дополнительный уровень. GitHub должен видеть файл settings.gradle.kts прямо в корне репозитория.

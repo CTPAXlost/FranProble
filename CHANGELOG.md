@@ -1,5 +1,13 @@
 # История изменений
 
+## 2.0.5 — 2026-08-03
+
+- Исправлена единственная уникальная Kotlin-ошибка из полного GitHub Actions-лога: неверный импорт `androidx.compose.foundation.layout.weight`.
+- Импорт удалён; все семь вызовов `Modifier.weight(...)` проверены в реальных `RowScope`/`ColumnScope`.
+- Добавлена защитная проверка, запрещающая повторное появление проблемного импорта.
+- Выполнен scope-aware Kotlin typecheck UI, ViewModel, Activity и theme с моделью API Compose Foundation 1.9.
+- Версия приложения обновлена до 2.0.5 / `versionCode 20005`.
+
 ## 2.0.4 — 2026-08-03
 
 - Полностью разобран свежий GitHub Actions-лог: единственной корневой ошибкой была собственная задача `verifyApi36Dependencies`, а Android-компиляция ещё не запускалась.

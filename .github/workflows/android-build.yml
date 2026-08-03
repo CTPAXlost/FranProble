@@ -74,13 +74,13 @@ jobs:
         run: scripts/run_ci_checks.sh
 
       - name: Copy APK with readable name
-        run: cp app/build/outputs/apk/debug/app-debug.apk FranProbe-2.0.4-debug.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk FranProbe-2.0.5-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: FranProbe-debug-APK
-          path: FranProbe-2.0.4-debug.apk
+          path: FranProbe-2.0.5-debug.apk
           if-no-files-found: error
           retention-days: 30
 

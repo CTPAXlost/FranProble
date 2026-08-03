@@ -1,4 +1,4 @@
-# FranProbe 2.0.4
+# FranProbe 2.0.5
 
 FranProbe — Android-приложение для послойной диагностики сети при режиме разрешённых адресов («белых списков»), выборочной фильтрации DNS, TCP/UDP и TLS/SNI.
 
@@ -37,7 +37,7 @@ FranProbe не помечает последующие тесты как `BLOCKE
 3. Откройте вкладку **Actions**.
 4. Запустите **FranProbe Android build**.
 5. После успешной сборки скачайте `FranProbe-debug-APK`.
-6. Внутри будет `FranProbe-2.0.4-debug.apk`.
+6. Внутри будет `FranProbe-2.0.5-debug.apk`.
 
 Workflow создаёт и проверяет Gradle Wrapper 9.5.0, устанавливает Android SDK Platform 36 и запускает все обязательные этапы:
 

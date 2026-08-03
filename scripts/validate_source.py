@@ -55,7 +55,7 @@ version_code = int(extract(r'versionCode\s*=\s*(\d+)', app_build, "versionCode")
 compile_sdk = int(extract(r'compileSdk\s*=\s*(\d+)', app_build, "compileSdk"))
 target_sdk = int(extract(r'targetSdk\s*=\s*(\d+)', app_build, "targetSdk"))
 
-if version_name != "2.0.4" or version_code != 20004:
+if version_name != "2.0.5" or version_code != 20005:
     raise SystemExit(f"Unexpected app version: {version_name} ({version_code})")
 if compile_sdk != 36 or target_sdk != 36:
     raise SystemExit(f"SDK mismatch: compileSdk={compile_sdk}, targetSdk={target_sdk}")
@@ -84,7 +84,7 @@ required_workflow_tokens = [
     '"platforms;android-36"',
     '"build-tools;36.0.0"',
     "scripts/run_ci_checks.sh",
-    "FranProbe-2.0.4-debug.apk",
+    "FranProbe-2.0.5-debug.apk",
     "FranProbe-build-diagnostics",
     "497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7",
     "553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746",
@@ -133,6 +133,12 @@ if f"# FranProbe {version_name}" not in readme:
     raise SystemExit("README version does not match app version")
 if f"FranProbe-{version_name}-debug.apk" not in readme:
     raise SystemExit("README APK name does not match app version")
+
+# Compose scope extensions such as Modifier.weight are provided by RowScope/ColumnScope.
+# A top-level import resolves to an internal implementation property in Compose 1.9 and breaks compilation.
+franprobe_ui = (root / "app/src/main/java/ru/franprobe/app/ui/FranProbeApp.kt").read_text(encoding="utf-8")
+if "import androidx.compose.foundation.layout.weight" in franprobe_ui:
+    raise SystemExit("Invalid Compose import: remove androidx.compose.foundation.layout.weight and use RowScope/ColumnScope")
 
 # Kotlin source sanity checks independent of Android SDK.
 for source in root.rglob("*.kt"):

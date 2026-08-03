@@ -1,39 +1,41 @@
-FranProbe 2.0.4 — итоговая проверка проекта
+FranProbe 2.0.5 — итоговая проверка проекта
+Дата: 2026-08-03
 
-КОРНЕВАЯ ПРИЧИНА СВЕЖЕГО ЛОГА
-[НАЙДЕНО] Сборку остановила собственная задача verifyApi36Dependencies.
-[НАЙДЕНО] Она ошибочно ожидала отдельный resolved artifact lifecycle-runtime-ktx:2.9.4.
-[ВАЖНО] Android-компиляция, ресурсы, unit-тесты, lint и assemble в этом запуске ещё не начинались.
+ПОЛНЫЙ РАЗБОР СВЕЖЕГО ЛОГА logs_83616228912.zip
+[PASS] Gradle Wrapper 9.5.0.
+[PASS] Android SDK Platform 36 и Build Tools 36.0.0.
+[PASS] Разрешение зависимостей.
+[PASS] AndroidX Core/Lifecycle/Compose dependency insight.
+[PASS] AAR metadata.
+[PASS] AndroidManifest.
+[PASS] Android resources.
+[FAIL] compileDebugKotlin.
 
-ЧТО ИСПРАВЛЕНО ОДНИМ ПАКЕТОМ
-[OK] Удалена ошибочная ручная задача и неиспользуемые Lifecycle-зависимости.
-[OK] Зафиксирован совместимый набор API 36 / AGP 9.3 / Gradle 9.5 / JDK 17.
-[OK] GitHub Actions запускает 15 этапов за один проход и не скрывает итоговый провал.
-[OK] Для каждого этапа создаются отдельные лог и exit code.
-[OK] Bootstrap-логи Wrapper и Android SDK больше не удаляются агрегатором.
-[OK] Проверяются AAR metadata, manifest, ресурсы, основной Kotlin и Kotlin тестов.
-[OK] Unit-тесты, lint и assemble запускаются даже после более ранней ошибки.
-[OK] Системный DNS-вызов стал прерываемым по timeout.
-[OK] Обрезанный DNS-ответ не считается полным успешным результатом.
-[OK] DNS question class и заявленная длина RDATA проверяются.
-[OK] Неподдерживаемый TLS/ALPN отделён от реальной сетевой блокировки.
-[OK] TLS и последующая HTTP-ошибка сохраняются раздельно.
-[OK] ICMP/UDP Port Unreachable сохраняется отдельно от тайм-аута.
-[OK] Временные ZIP экспорта очищаются; отчёты исключены из Android Backup.
+В полном логе обнаружена ровно одна уникальная строка Kotlin-компилятора:
+FranProbeApp.kt:16:43 Cannot access RowColumnParentData?.weight: it is internal in file.
 
-ВЫПОЛНЕННЫЕ ПРОВЕРКИ
-[PASS] Полный разбор свежего архива логов: одна корневая ошибка, других выполненных build-этапов не было.
-[PASS] scripts/validate_source.py: версия 2.0.4, SDK 36, структура и защитные проверки.
-[PASS] XML-парсинг всех manifest/resource XML.
-[PASS] YAML-парсинг GitHub Actions workflow.
-[PASS] bash -n для scripts/run_ci_checks.sh.
-[PASS] Kotlin typecheck сетевого ядра, DNS, движка и экспортера со строгими API-заглушками.
-[PASS] Kotlin typecheck MainActivity, ViewModel, Compose UI и theme.
-[PASS] Kotlin typecheck 13 unit-тестов.
-[PASS] Runtime smoke: DNS transaction ID, question class, RDATA bounds, A-ответ и IPv4/IPv6 literals.
-[PASS] Симуляция успешного CI: 15/15 этапов, APK-этап выполнен, bootstrap-логи сохранены.
-[PASS] Симуляция CI с двумя ошибками: оба провала попали в сводку, assemble всё равно был запущен.
-[PASS] Проверка отсутствия TODO/FIXME/NUL, несовпадения package/path и устаревших версий.
+Остальные FAIL (unit-test compile, unit tests, lint, assemble) являются вторичными:
+каждый из них повторно вызывает compileDebugKotlin и падает на той же строке.
 
-ЧЕСТНОЕ ОГРАНИЧЕНИЕ
-В локальном контейнере нет Android SDK и полного кэша Google/Maven, поэтому реальный AGP assembleDebug здесь не выполнялся. Именно поэтому workflow переделан так, чтобы следующий запуск GitHub не останавливался на первой ошибке: он соберёт полный комплект логов всех доступных этапов за один раз. APK публикуется только если прошли все обязательные проверки и файл действительно существует.
+ИСПРАВЛЕНО
+[OK] Удалён import androidx.compose.foundation.layout.weight.
+[OK] Все семь Modifier.weight(...) находятся внутри Row/Column content scopes.
+[OK] Добавлена защита в scripts/validate_source.py от повторного появления импорта.
+[OK] Версия обновлена до 2.0.5 / versionCode 20005.
+[OK] Имя артефакта обновлено до FranProbe-2.0.5-debug.apk.
+
+ВЫПОЛНЕННЫЕ ЛОКАЛЬНЫЕ ПРОВЕРКИ
+[PASS] scripts/validate_source.py.
+[PASS] XML-парсинг manifest и ресурсов: 9 файлов.
+[PASS] bash -n scripts/run_ci_checks.sh.
+[PASS] Проверка согласованности версии, SDK и имени APK.
+[PASS] Runtime smoke DNS-кодека: A, AAAA, truncation и отклонение некорректного вопроса.
+[PASS] Scope-aware Kotlin typecheck UI/ViewModel/Activity/theme.
+       В заглушках отсутствует top-level weight; extension доступен только через RowScope/ColumnScope,
+       как в Compose Foundation 1.9. Компиляция завершилась с кодом 0.
+[PASS] Проверка отсутствия проблемного импорта во всём проекте.
+[PASS] Проверка ZIP после упаковки и контрольная SHA-256.
+
+ОГРАНИЧЕНИЕ
+Полный AGP assembleDebug локально не выполнен: в контейнере отсутствует Android SDK и Gradle/Maven-кэш.
+GitHub Actions выполняет реальную компиляцию, unit-тесты, lint и сборку APK и сохраняет все логи.
